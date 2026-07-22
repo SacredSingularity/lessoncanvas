@@ -180,6 +180,18 @@
   .lc-modal-body iframe{width:100%;height:100%;border:none;display:block;}
   .lc-modal-body-scroll{flex:1;min-height:0;overflow-y:auto;padding:16px 20px;}
 
+  .lc-ai-panel{width:420px;max-width:94vw;height:min(600px,86vh);}
+  .lc-ai-messages{flex:1;min-height:0;overflow-y:auto;padding:16px 20px;display:flex;flex-direction:column;gap:10px;}
+  .lc-ai-msg{max-width:85%;padding:9px 12px;border-radius:12px;font-size:13.5px;line-height:1.5;white-space:pre-wrap;}
+  .lc-ai-msg-user{align-self:flex-end;background:var(--accent);color:#fff;border-bottom-right-radius:4px;}
+  .lc-ai-msg-bot{align-self:flex-start;background:var(--accent-dim);color:var(--text);border-bottom-left-radius:4px;}
+  .lc-ai-msg-error{align-self:flex-start;background:var(--bad-bg);color:var(--bad);}
+  .lc-ai-inputrow{display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--border);flex-shrink:0;}
+  .lc-ai-inputrow textarea{
+    flex:1;resize:none;border:1px solid var(--border);border-radius:10px;padding:8px 10px;
+    font-size:13.5px;font-family:inherit;min-height:38px;max-height:100px;
+  }
+
   .lc-badge{
     display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;
     padding:0 4px;margin-left:5px;border-radius:8px;background:var(--accent);color:#fff;
@@ -1177,6 +1189,7 @@
       <div class="lc-header-right">
         <button class="lc-btn lc-btn-small" id="lc-sources-toggle">📚 Sources<span class="lc-badge" id="lc-sources-badge" style="display:none;"></span></button>
         <button class="lc-btn lc-btn-small" id="lc-calc-toggle">🧮 Calculator</button>
+        <button class="lc-btn lc-btn-small" id="lc-ai-toggle">🤖 AI Helper</button>
         <button class="lc-btn lc-btn-small" id="lc-dev-toggle">{ } Dev</button>
       </div>
     `;
@@ -1217,6 +1230,7 @@
     document.getElementById('lc-dev-toggle').addEventListener('click', toggleDevPanel);
     document.getElementById('lc-calc-toggle').addEventListener('click', toggleCalculatorModal);
     document.getElementById('lc-sources-toggle').addEventListener('click', toggleSourcesModal);
+    document.getElementById('lc-ai-toggle').addEventListener('click', toggleAiHelperModal);
 
     updateChrome();
     renderSlide(0);
@@ -1460,6 +1474,109 @@
     sourcesModalEl.remove();
     sourcesModalEl = null;
     document.removeEventListener('keydown', sourcesModalEscHandler);
+  }
+
+  // ---- AI helper (chat panel backed by a Worker /api/ask endpoint) ----
+  let aiHelperModalEl = null;
+  let aiHelperMessages = [];
+
+  function getCurrentSlideContext(){
+    const slide = lesson.slides[currentSlide];
+    if(!slide) return '';
+    const parts = [];
+    (slide.blocks||[]).forEach(b=>{
+      if(b.type==='heading') parts.push(b.text||'');
+      else if(b.type==='text') parts.push(String(b.text||'').replace(/<[^>]+>/g,' '));
+      else if(b.type==='math') parts.push('Math: ' + (b.tex||b.latex||''));
+      else if(b.type==='image' && b.caption) parts.push('Image caption: ' + b.caption);
+    });
+    return parts.join('\n').trim();
+  }
+
+  function renderAiHelperMessages(){
+    const body = aiHelperModalEl.querySelector('.lc-ai-messages');
+    body.innerHTML = '';
+    if(!aiHelperMessages.length){
+      const hint = document.createElement('div');
+      hint.className = 'lc-ai-msg lc-ai-msg-bot';
+      hint.textContent = "Hi! Ask me about this slide, or anything else you're stuck on.";
+      body.appendChild(hint);
+    }
+    aiHelperMessages.forEach(m=>{
+      const el = document.createElement('div');
+      el.className = 'lc-ai-msg ' + (m.role==='user' ? 'lc-ai-msg-user' : m.role==='error' ? 'lc-ai-msg-error' : 'lc-ai-msg-bot');
+      el.textContent = m.text;
+      body.appendChild(el);
+    });
+    body.scrollTop = body.scrollHeight;
+  }
+
+  async function sendAiHelperQuestion(){
+    const input = document.getElementById('lc-ai-input');
+    const question = input.value.trim();
+    if(!question) return;
+    input.value = '';
+    aiHelperMessages.push({role:'user', text:question});
+    const sendBtn = document.getElementById('lc-ai-send');
+    sendBtn.disabled = true;
+    aiHelperMessages.push({role:'bot', text:'Thinking…'});
+    renderAiHelperMessages();
+    try{
+      const res = await fetch('/api/ask', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ question, context: getCurrentSlideContext() })
+      });
+      if(!res.ok) throw new Error('request failed (' + res.status + ')');
+      const data = await res.json();
+      aiHelperMessages.pop();
+      aiHelperMessages.push({role:'bot', text: data.answer || '(no answer returned)'});
+    }catch(err){
+      aiHelperMessages.pop();
+      aiHelperMessages.push({role:'error', text:'AI helper is unavailable right now (' + err.message + ').'});
+    }
+    sendBtn.disabled = false;
+    renderAiHelperMessages();
+  }
+
+  function toggleAiHelperModal(){
+    if(aiHelperModalEl){ closeAiHelperModal(); return; }
+    aiHelperModalEl = document.createElement('div');
+    aiHelperModalEl.className = 'lc-modal-backdrop';
+    aiHelperModalEl.innerHTML = `
+      <div class="lc-modal-panel lc-ai-panel">
+        <div class="lc-modal-header">
+          <strong>🤖 AI Helper</strong>
+          <button class="lc-btn lc-btn-small" id="lc-ai-close">✕ Close</button>
+        </div>
+        <div class="lc-ai-messages"></div>
+        <div class="lc-ai-inputrow">
+          <textarea id="lc-ai-input" placeholder="Ask about this slide..." rows="1"></textarea>
+          <button class="lc-btn lc-btn-primary lc-btn-small" id="lc-ai-send">Send</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(aiHelperModalEl);
+    renderAiHelperMessages();
+    document.getElementById('lc-ai-close').addEventListener('click', closeAiHelperModal);
+    document.getElementById('lc-ai-send').addEventListener('click', sendAiHelperQuestion);
+    document.getElementById('lc-ai-input').addEventListener('keydown', (e)=>{
+      if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); sendAiHelperQuestion(); }
+    });
+    aiHelperModalEl.addEventListener('mousedown', (e)=>{
+      if(e.target === aiHelperModalEl) closeAiHelperModal();
+    });
+    document.addEventListener('keydown', aiHelperModalEscHandler);
+    document.getElementById('lc-ai-input').focus();
+  }
+  function aiHelperModalEscHandler(e){
+    if(e.key === 'Escape') closeAiHelperModal();
+  }
+  function closeAiHelperModal(){
+    if(!aiHelperModalEl) return;
+    aiHelperModalEl.remove();
+    aiHelperModalEl = null;
+    document.removeEventListener('keydown', aiHelperModalEscHandler);
   }
 
   // ---- dev JSON paste panel ----
