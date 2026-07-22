@@ -1522,7 +1522,7 @@
     aiHelperMessages.push({role:'bot', text:'Thinking…'});
     renderAiHelperMessages();
     try{
-      const res = await fetch('/api/ask', {
+      const res = await fetch('https://lessoncanvas.jtraini.workers.dev/api/ask', {
         method:'POST',
         headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ question, context: getCurrentSlideContext() })

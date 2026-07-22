@@ -1,7 +1,16 @@
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
+};
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
+    if (url.pathname === "/api/ask" && request.method === "OPTIONS") {
+      return new Response(null, { headers: CORS_HEADERS });
+    }
     if (url.pathname === "/api/ask" && request.method === "POST") {
       return handleAsk(request, env);
     }
@@ -56,6 +65,6 @@ async function handleAsk(request, env) {
 function jsonResponse(obj, status = 200) {
   return new Response(JSON.stringify(obj), {
     status,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...CORS_HEADERS },
   });
 }
